@@ -15,13 +15,19 @@ SERIES = [
     'DCOILWTICO', # wti crude oil price
     'BAMLH0A0HYM2', # ICE BofA US High Yield Index Option-Adjusted Spread
     'SOFR', # secured overnight financing rate  
-    'EFFR'  # effective federal funds rate
+    'EFFR',   # effective federal funds rate
+    'UNRATE', # unemployment rate
+    'PAYEMS', # payroll employment: total nonfarm
+    'CPIAUCSL', # consumer price index for all urban consumers: all items
+    'GDPC1', # real gross domestic product
+    'M2SL', # M2 money stock
+    'PCEPI', # personal consumption expenditures: price index
+    'PCECC96', # real personal consumption expenditures
 ]
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "sip", "alpha", "fred"))
 
 START_DATE = '2019-01-01'
-TODAY = datetime.now().strftime('%Y-%m-%d')
 
 @timer
 def info(refresh=False):
@@ -48,7 +54,8 @@ def releases(refresh=False):
         data = []
         for s in SERIES:
             logger.info(f"Downloading releases for series {s}...")
-            r = fred.get_series_all_releases(s, realtime_start=START_DATE, realtime_end=TODAY)
+            r = fred.get_series_all_releases(s, realtime_start=START_DATE, realtime_end=util.est_today())
+            r = r[r['value'].notna()]
             r['id'] = s
             data.append(r)
         df = pd.concat(data).set_index('id')
@@ -56,7 +63,7 @@ def releases(refresh=False):
         logger.info("Data successfully cached.")
         return releases()
     
-def point_in_time(date = TODAY, refresh=False):
+def point_in_time(date = util.est_today(), refresh=False):
     path = os.path.abspath(os.path.join(DATA_DIR, f"fred_point_in_time_{date}.csv"))
     if not refresh and os.path.exists(path):
         logger.info(f"Loading point-in-time data for {date} from {path}...")
@@ -70,10 +77,21 @@ def point_in_time(date = TODAY, refresh=False):
         df.set_index('date', inplace=True)
         for s in SERIES:
             logger.info(f"Processing series {s}...")
-            r = releases_data.loc[s]
-            r = r[r['realtime_start'] <= date].sort_values('realtime_start').drop_duplicates('date', keep='last')
-            r.set_index('date', inplace=True)
-            df = df.join(r['value'].rename(s))
+            r = releases_data.loc[s].reset_index()
+            # recent release for ech date
+            latest_revisions = r.loc[r.groupby('date')['realtime_start'].idxmax()].reset_index(drop=True)
+            latest_revisions = latest_revisions.sort_values('date').reset_index(drop=True)
+            dates_df = pd.DataFrame({'date': df.index}).sort_values('date').reset_index(drop=True)
+            # carry forward if nothing is published
+            merged = pd.merge_asof(
+                dates_df, 
+                latest_revisions[['date', 'value']].rename(columns={'date': 'source_date'}),
+                left_on='date',
+                right_on='source_date', 
+                direction='backward'
+            )
+            df[s] = merged['value'].values
+            df[f'{s}_date'] = merged['source_date'].values
         df.to_csv(path)
         logger.info("Data successfully cached.")
         return point_in_time(date)
