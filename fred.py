@@ -45,6 +45,7 @@ def info(refresh=False):
     
 @timer
 def releases(refresh=False):
+    # todo: use duckdb instead, store data as directory of parquets, new release just saved
     path = os.path.abspath(os.path.join(DATA_DIR, "fred_releases.csv"))
     if not refresh and os.path.exists(path):
         logger.info(f"Loading releases from {path}...")
